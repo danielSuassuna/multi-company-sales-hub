@@ -21,6 +21,10 @@ const Produtos = () => {
   const [nome, setNome] = useState("");
   const [preco, setPreco] = useState("");
 
+  const [novasMateriasProd, setNovasMateriasProd] = useState<{ id: string, name: string, qtd: string }[]>([]);
+  const [tempMateria, setTempMateria] = useState("");
+  const [tempQtd, setTempQtd] = useState("");
+
   // adicionar materia
   const [novoMateria, setNovoMateria] = useState("");
   const [novoQtd, setNovoQtd] = useState("");
@@ -33,7 +37,7 @@ const Produtos = () => {
     setItems(prods ?? []);
     const { data: mats } = await supabase.from("MateriaPrima").select("*").eq("id_empresa", empresaId);
     setMaterias(mats ?? []);
-    const { data: pm } = await supabase.from("ProduxMateria").select("*, MateriaPrima:id_materia(nome, Custo, Fator)").eq("id_empresa", empresaId);
+    const { data: pm } = await supabase.from("ProduxMateria").select("*, MateriaPrima:id_materia(nome, Custo)").eq("id_empresa", empresaId);
     const map: Record<number, any[]> = {};
     (pm ?? []).forEach((r: any) => {
       map[r.id_produto] ??= [];
@@ -46,11 +50,29 @@ const Produtos = () => {
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empresaId) return;
-    const { error } = await supabase.from("Produtos").insert({
-      Nome: nome, Preco_venda: parseFloat(preco), Custo: 0, id_empresa: empresaId,
-    });
+    const { data: prodData, error } = await supabase.from("Produtos").insert({
+      Nome: nome, Preco_venda: parseFloat(preco), Custo: 0, id_empresa: empresaId, is_unique: novasMateriasProd.length === 0,
+    } as any).select().single();
+    
     if (error) return toast.error(error.message);
+
+    if (novasMateriasProd.length > 0) {
+      const pmData = novasMateriasProd.map(m => ({
+        id_produto: prodData.id,
+        id_materia: parseInt(m.id),
+        quantidade: parseInt(m.qtd),
+        id_empresa: empresaId,
+      }));
+      const { error: pmError } = await supabase.from("ProduxMateria").insert(pmData);
+      if (pmError) {
+        toast.error("Erro ao vincular matérias-primas: " + pmError.message);
+      } else {
+        await recalcCusto(prodData.id);
+      }
+    }
+
     setNome(""); setPreco("");
+    setNovasMateriasProd([]);
     toast.success("Produto cadastrado");
     load();
   };
@@ -64,6 +86,11 @@ const Produtos = () => {
 
   const addMateria = async (idProduto: number) => {
     if (!novoMateria || !novoQtd || !empresaId) return;
+    
+    // Check if duplicate
+    const jaExiste = (receitas[idProduto] ?? []).some(r => r.id_materia === parseInt(novoMateria));
+    if (jaExiste) return toast.error("Este ingrediente já faz parte da receita deste produto.");
+
     const { error } = await supabase.from("ProduxMateria").insert({
       id_produto: idProduto,
       id_materia: parseInt(novoMateria),
@@ -84,9 +111,9 @@ const Produtos = () => {
   };
 
   const recalcCusto = async (idProduto: number) => {
-    const { data } = await supabase.from("ProduxMateria").select("quantidade, MateriaPrima:id_materia(Custo, Fator)").eq("id_produto", idProduto);
+    const { data } = await supabase.from("ProduxMateria").select("quantidade, MateriaPrima:id_materia(Custo)").eq("id_produto", idProduto);
     const custo = (data ?? []).reduce((s: number, r: any) => {
-      const unit = (r.MateriaPrima?.Custo ?? 0) / Math.max(1, r.MateriaPrima?.Fator ?? 1);
+      const unit = r.MateriaPrima?.Custo ?? 0;
       return s + unit * (r.quantidade ?? 0);
     }, 0);
     await supabase.from("Produtos").update({ Custo: custo }).eq("id", idProduto);
@@ -109,7 +136,56 @@ const Produtos = () => {
             <Label>Preço de venda</Label>
             <Input type="number" step="0.01" required value={preco} onChange={(e) => setPreco(e.target.value)} />
           </div>
-          <Button type="submit" className="md:col-span-3"><Plus className="h-4 w-4 mr-1" /> Adicionar produto</Button>
+
+          <div className="md:col-span-3 space-y-4 pt-2">
+            <div className="text-sm font-medium text-muted-foreground">Receita (Opcional - deixe vazio para produto de revenda)</div>
+            {novasMateriasProd.length > 0 && (
+                <div className="space-y-2">
+                  {novasMateriasProd.map((m, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-sm border p-2 rounded">
+                      <span>{m.name} × {m.qtd}</span>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => {
+                          setNovasMateriasProd(prev => prev.filter((_, i) => i !== idx));
+                      }}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <div className="flex gap-2 items-end">
+                <div className="flex-1 space-y-2">
+                  <Select value={tempMateria} onValueChange={setTempMateria}>
+                    <SelectTrigger><SelectValue placeholder="Matéria-prima" /></SelectTrigger>
+                    <SelectContent>
+                      {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Input className="w-24" type="number" placeholder="Qtd" value={tempQtd} onChange={(e) => setTempQtd(e.target.value)} />
+                </div>
+                <Button type="button" size="sm" variant="secondary" onClick={() => {
+                  if (!tempMateria || !tempQtd) return;
+                  
+                  // Check if duplicate
+                  if (novasMateriasProd.some(m => m.id === tempMateria)) {
+                    return toast.error("Este ingrediente já foi adicionado.");
+                  }
+
+                  const mat = materias.find(m => String(m.id) === tempMateria);
+                  if (mat) {
+                    setNovasMateriasProd(prev => [...prev, { id: tempMateria, name: mat.nome, qtd: tempQtd }]);
+                    setTempMateria("");
+                    setTempQtd("");
+                  }
+                }}>Adicionar</Button>
+              </div>
+            </div>
+
+
+          <Button type="submit" className="md:col-span-3 mt-4"><Plus className="h-4 w-4 mr-1" /> Cadastrar produto</Button>
         </form>
       </Card>
 
@@ -121,7 +197,10 @@ const Produtos = () => {
             <Card key={p.id} className="overflow-hidden">
               <div className="p-4 flex items-center gap-3">
                 <div className="flex-1">
-                  <div className="font-medium">{p.Nome}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{p.Nome}</span>
+                    {p.is_unique && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-bold uppercase tracking-tight">Revenda</span>}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     Venda {fmt(p.Preco_venda ?? 0)} · Custo {fmt(p.Custo ?? 0)} · <span className="text-success">Margem {fmt(margem)}</span>
                   </div>

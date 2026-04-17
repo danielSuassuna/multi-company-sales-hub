@@ -21,6 +21,7 @@ const Cardapio = () => {
   const [nome, setNome] = useState("");
   const [valor, setValor] = useState("");
   const [novoProd, setNovoProd] = useState("");
+  const [tempProds, setTempProds] = useState<any[]>([]);
 
   useEffect(() => { document.title = "Cardápio · Vendas Pro"; }, []);
 
@@ -30,7 +31,7 @@ const Cardapio = () => {
     setItems(c ?? []);
     const { data: p } = await supabase.from("Produtos").select("*").eq("id_empresa", empresaId);
     setProdutos(p ?? []);
-    const { data: pc } = await supabase.from("ProduxCard").select("*, Produtos:id_produto(Nome)").eq("id_empresa", empresaId);
+    const { data: pc } = await supabase.from("ProduxCard").select("*, Produtos:id_produto(Nome, Custo)").eq("id_empresa", empresaId);
     const map: Record<number, any[]> = {};
     (pc ?? []).forEach((r: any) => {
       if (!r.id_cardapio) return;
@@ -41,13 +42,45 @@ const Cardapio = () => {
   };
   useEffect(() => { load(); }, [empresaId]);
 
+  const addTempProd = () => {
+    if (!novoProd) return;
+    const p = produtos.find(x => String(x.id) === novoProd);
+    if (!p) return;
+    if (tempProds.some(x => x.id === p.id)) {
+      return toast.warning("Este produto já foi adicionado ao item.");
+    }
+    setTempProds([...tempProds, p]);
+    setNovoProd("");
+  };
+
+  const removeTempProd = (id: number) => {
+    setTempProds(tempProds.filter(p => p.id !== id));
+  };
+
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empresaId) return;
-    const { error } = await supabase.from("Cardapio").insert({ Nome: nome, Valor: parseFloat(valor), id_empresa: empresaId });
-    if (error) return toast.error(error.message);
-    setNome(""); setValor("");
-    toast.success("Item adicionado ao cardápio");
+    
+    // 1. Create the menu item
+    const { data: c, error: cErr } = await supabase.from("Cardapio")
+      .insert({ Nome: nome, Valor: parseFloat(valor), id_empresa: empresaId })
+      .select().single();
+    
+    if (cErr) return toast.error(cErr.message);
+
+    // 2. Link products if any
+    if (tempProds.length > 0) {
+      const links = tempProds.map(p => ({
+        id_cardapio: c.id,
+        id_produto: p.id,
+        id_empresa: empresaId
+      }));
+      const { error: lErr } = await supabase.from("ProduxCard").insert(links);
+      if (lErr) toast.error("Erro ao vincular produtos: " + lErr.message);
+    }
+
+    setNome(""); setValor(""); setTempProds([]);
+    toast.success("Item adicionado ao cardápio com seus produtos");
     load();
   };
 
@@ -60,6 +93,13 @@ const Cardapio = () => {
 
   const addProd = async (idCard: number) => {
     if (!novoProd || !empresaId) return;
+    
+    // Duplicate check for existing item
+    const existing = vincs[idCard] ?? [];
+    if (existing.some(v => String(v.id_produto) === novoProd)) {
+      return toast.warning("Este produto já está vinculado a este item.");
+    }
+
     const { error } = await supabase.from("ProduxCard").insert({
       id_cardapio: idCard, id_produto: parseInt(novoProd), id_empresa: empresaId,
     });
@@ -73,6 +113,10 @@ const Cardapio = () => {
     load();
   };
 
+  const tempCusto = tempProds.reduce((s, p) => s + (p.Custo ?? 0), 0);
+  const tempValor = parseFloat(valor) || 0;
+  const tempMargem = tempValor > 0 ? ((tempValor - tempCusto) / tempValor) * 100 : 0;
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <header>
@@ -80,43 +124,97 @@ const Cardapio = () => {
         <p className="text-muted-foreground">Itens vendáveis (combinações de produtos)</p>
       </header>
 
-      <Card className="p-5">
+      <Card className="p-5 border-l-4 border-l-primary shadow-elegant">
         <form onSubmit={add} className="grid md:grid-cols-3 gap-3 items-end">
           <div className="space-y-2 md:col-span-2">
             <Label>Nome do item</Label>
-            <Input required value={nome} onChange={(e) => setNome(e.target.value)} />
+            <Input required value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Combo Família" />
           </div>
           <div className="space-y-2">
-            <Label>Valor (R$)</Label>
+            <Label>Valor de Venda (R$)</Label>
             <Input type="number" step="0.01" required value={valor} onChange={(e) => setValor(e.target.value)} />
           </div>
-          <Button type="submit" className="md:col-span-3"><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
+
+          <div className="md:col-span-3 border-t pt-4 mt-2">
+            <div className="flex items-center justify-between mb-2">
+              <Label className="text-xs uppercase text-muted-foreground">Composição do Item (Opcional)</Label>
+              {tempProds.length > 0 && (
+                <div className="flex gap-4 items-center">
+                  <div className="text-[10px] uppercase font-bold text-muted-foreground">
+                    Custo total: <span className="text-primary">{fmt(tempCusto)}</span>
+                  </div>
+                  <div className="text-[10px] uppercase font-bold text-muted-foreground">
+                    Margem: <span className={tempMargem < 30 ? "text-destructive" : "text-success"}>{tempMargem.toFixed(1)}%</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Select value={novoProd} onValueChange={setNovoProd}>
+                <SelectTrigger><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
+                <SelectContent>
+                  {produtos.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.Nome} ({fmt(p.Custo ?? 0)})</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button type="button" variant="outline" onClick={addTempProd}>Adicionar</Button>
+            </div>
+
+            {tempProds.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {tempProds.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2 bg-primary/10 text-primary text-xs px-2 py-1 rounded-full border border-primary/20">
+                    {p.Nome} ({fmt(p.Custo ?? 0)})
+                    <button type="button" onClick={() => removeTempProd(p.id)} className="hover:text-destructive">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Button type="submit" className="md:col-span-3 mt-2"><Plus className="h-4 w-4 mr-1" /> Cadastrar no Cardápio</Button>
         </form>
       </Card>
 
       <div className="space-y-3">
         {items.map((c) => {
           const isOpen = open === c.id;
+          const pcVincs = vincs[c.id] ?? [];
+          const totalCusto = pcVincs.reduce((s, v) => s + (v.Produtos?.Custo ?? 0), 0);
+          const margem = c.Valor > 0 ? ((c.Valor - totalCusto) / c.Valor) * 100 : 0;
+
           return (
-            <Card key={c.id} className="overflow-hidden">
-              <div className="p-4 flex items-center gap-3">
+            <Card key={c.id} className="overflow-hidden border-l-4 border-l-transparent hover:border-l-primary transition-all">
+              <div className="p-4 flex items-center gap-6">
                 <div className="flex-1">
-                  <div className="font-medium">{c.Nome}</div>
-                  <div className="text-sm text-primary">{fmt(c.Valor ?? 0)}</div>
+                  <div className="font-semibold text-lg">{c.Nome}</div>
+                  <div className="flex gap-4 mt-1">
+                    <div className="text-sm font-bold text-primary">{fmt(c.Valor ?? 0)} <span className="text-[10px] text-muted-foreground font-normal ml-1">VENDA</span></div>
+                    <div className="text-sm font-medium text-muted-foreground">{fmt(totalCusto)} <span className="text-[10px] uppercase font-normal ml-1">CUSTO</span></div>
+                    <div className={`text-sm font-bold ${margem < 30 ? "text-destructive" : "text-success"}`}>
+                      {margem.toFixed(1)}% <span className="text-[10px] uppercase font-normal ml-1">MARGEM</span>
+                    </div>
+                  </div>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => setOpen(isOpen ? null : c.id)}>
-                  {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => remove(c.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
+                <div className="flex gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setOpen(isOpen ? null : c.id)}>
+                    {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => remove(c.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
               </div>
               {isOpen && (
-                <div className="border-t border-border p-4 space-y-3 bg-muted/20">
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Produtos vinculados</div>
-                  {(vincs[c.id] ?? []).map((v) => (
-                    <div key={v.id} className="flex items-center justify-between text-sm">
-                      <span>{v.Produtos?.Nome}</span>
+                <div className="border-t border-border p-4 space-y-3 bg-muted/10">
+                  <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Composição do Item</div>
+                  {pcVincs.map((v) => (
+                    <div key={v.id} className="flex items-center justify-between text-sm bg-background p-2 rounded border border-border/50">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{v.Produtos?.Nome}</span>
+                        <span className="text-xs text-muted-foreground">{fmt(v.Produtos?.Custo ?? 0)}</span>
+                      </div>
                       <Button size="sm" variant="ghost" onClick={() => removeProd(v.id)}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
@@ -124,9 +222,9 @@ const Cardapio = () => {
                   ))}
                   <div className="flex gap-2 pt-2">
                     <Select value={novoProd} onValueChange={setNovoProd}>
-                      <SelectTrigger><SelectValue placeholder="Produto" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Vincular mais um produto" /></SelectTrigger>
                       <SelectContent>
-                        {produtos.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.Nome}</SelectItem>)}
+                        {produtos.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.Nome} ({fmt(p.Custo ?? 0)})</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Button size="sm" onClick={() => addProd(c.id)}>Vincular</Button>

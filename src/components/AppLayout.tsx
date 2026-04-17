@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, ShoppingCart, ScrollText, BookOpen, Package, Boxes,
-  Tags, Wallet, Building2, LogOut, Receipt, Wheat
+  Tags, Wallet, Building2, LogOut, Receipt, Wheat, Send
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ const nav = [
   { to: "/categorias", label: "Categorias", icon: Tags, roles: ["admin", "gerente"] },
   { to: "/gastos", label: "Gastos", icon: Wallet, roles: ["admin", "gerente"] },
   { to: "/empresa", label: "Empresa", icon: Building2, roles: ["admin"] },
+  { to: "/telegram", label: "Telegram", icon: Send, roles: ["admin"] },
 ] as const;
 
 export const AppLayout = () => {

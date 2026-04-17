@@ -1,73 +1,52 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
 
 const Estoque = () => {
   const { empresaId } = useAuth();
   const [materias, setMaterias] = useState<any[]>([]);
-  const [saldos, setSaldos] = useState<Record<number, number>>({});
-  const [idMateria, setIdMateria] = useState("");
-  const [qtd, setQtd] = useState("");
+  const [uniques, setUniques] = useState<any[]>([]);
+  const [saldosMat, setSaldosMat] = useState<Record<number, number>>({});
+  const [saldosProd, setSaldosProd] = useState<Record<number, number>>({});
 
   useEffect(() => { document.title = "Estoque · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
+    
+    // 1. Get stock balances (single row per item)
+    const { data: e } = await supabase.from("Estoque").select("*").eq("id_empresa", empresaId);
+    const sm: Record<number, number> = {};
+    const sp: Record<number, number> = {};
+    
+    // Even if there are multiple rows (during migration), this will eventually point to the single row value
+    (e ?? []).forEach((r: any) => {
+      if (r.id_materia) sm[r.id_materia] = (sm[r.id_materia] ?? 0) + (r.quantidade ?? 0);
+      if (r.id_produto) sp[r.id_produto] = (sp[r.id_produto] ?? 0) + (r.quantidade ?? 0);
+    });
+
+    // 2. Get Materias Primas
     const { data: m } = await supabase.from("MateriaPrima").select("*").eq("id_empresa", empresaId).order("nome");
     setMaterias(m ?? []);
-    const ids = (m ?? []).map((x: any) => x.id);
-    if (ids.length === 0) { setSaldos({}); return; }
-    const { data: e } = await supabase.from("Estoque").select("*").in("id_materia", ids);
-    const sums: Record<number, number> = {};
-    (e ?? []).forEach((r: any) => { sums[r.id_materia] = (sums[r.id_materia] ?? 0) + (r.quantidade ?? 0); });
-    setSaldos(sums);
+
+    // 3. Get Products and filter those that should be in inventory
+    const { data: allProds } = await supabase.from("Produtos").select("*").eq("id_empresa", empresaId).order("Nome");
+    const filteredUniques = (allProds ?? []).filter(p => p.is_unique || (sp[p.id] !== undefined && sp[p.id] !== 0));
+    
+    setSaldosMat(sm);
+    setSaldosProd(sp);
+    setUniques(filteredUniques);
   };
   useEffect(() => { load(); }, [empresaId]);
-
-  const lancar = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!idMateria || !qtd) return;
-    const { error } = await supabase.from("Estoque").insert({
-      id_materia: parseInt(idMateria), quantidade: parseInt(qtd),
-    });
-    if (error) return toast.error(error.message);
-    setQtd("");
-    toast.success("Movimentação registrada");
-    load();
-  };
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
       <header>
         <h1 className="text-3xl font-semibold">Estoque</h1>
-        <p className="text-muted-foreground">Saldo de matérias-primas (use valores negativos para baixa manual)</p>
+        <p className="text-muted-foreground">Saldo atual de matérias-primas</p>
       </header>
-
-      <Card className="p-5">
-        <form onSubmit={lancar} className="grid md:grid-cols-[2fr,1fr,auto] gap-3 items-end">
-          <div className="space-y-2">
-            <Label>Matéria-prima</Label>
-            <Select value={idMateria} onValueChange={setIdMateria}>
-              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Quantidade</Label>
-            <Input type="number" required value={qtd} onChange={(e) => setQtd(e.target.value)} />
-          </div>
-          <Button type="submit"><Plus className="h-4 w-4 mr-1" /> Lançar</Button>
-        </form>
-      </Card>
 
       <Card className="overflow-hidden">
         <table className="w-full text-sm">
@@ -79,17 +58,28 @@ const Estoque = () => {
           </thead>
           <tbody>
             {materias.map((m) => {
-              const s = saldos[m.id] ?? 0;
+              const s = saldosMat[m.id] ?? 0;
               return (
-                <tr key={m.id} className="border-t border-border">
-                  <td className="px-4 py-2">{m.nome}</td>
+                <tr key={"mat-"+m.id} className="border-t border-border">
+                  <td className="px-4 py-2">{m.nome} <span className="text-[10px] text-muted-foreground ml-1 uppercase">(MP)</span></td>
                   <td className={`px-4 py-2 text-right font-medium ${s < 0 ? "text-destructive" : s === 0 ? "text-muted-foreground" : "text-success"}`}>
                     {s}
                   </td>
                 </tr>
               );
             })}
-            {materias.length === 0 && <tr><td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">Sem matérias-primas.</td></tr>}
+            {uniques.map((p) => {
+              const s = saldosProd[p.id] ?? 0;
+              return (
+                <tr key={"prod-"+p.id} className="border-t border-border">
+                  <td className="px-4 py-2">{p.Nome} <span className="text-[10px] text-primary/70 ml-1 uppercase">(Revenda)</span></td>
+                  <td className={`px-4 py-2 text-right font-medium ${s < 0 ? "text-destructive" : s === 0 ? "text-muted-foreground" : "text-success"}`}>
+                    {s}
+                  </td>
+                </tr>
+              );
+            })}
+            {materias.length === 0 && uniques.length === 0 && <tr><td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">Vazio.</td></tr>}
           </tbody>
         </table>
       </Card>

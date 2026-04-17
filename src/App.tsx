@@ -17,6 +17,7 @@ import Estoque from "./pages/Estoque";
 import Categorias from "./pages/Categorias";
 import Gastos from "./pages/Gastos";
 import Empresa from "./pages/Empresa";
+import Telegram from "./pages/Telegram";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -41,6 +42,7 @@ const App = () => (
               <Route path="/categorias" element={<ProtectedRoute allow={["admin", "gerente"]}><Categorias /></ProtectedRoute>} />
               <Route path="/gastos" element={<ProtectedRoute allow={["admin", "gerente"]}><Gastos /></ProtectedRoute>} />
               <Route path="/empresa" element={<ProtectedRoute allow={["admin"]}><Empresa /></ProtectedRoute>} />
+              <Route path="/telegram" element={<ProtectedRoute allow={["admin"]}><Telegram /></ProtectedRoute>} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

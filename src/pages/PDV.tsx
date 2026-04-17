@@ -4,15 +4,33 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Plus, Minus, ShoppingCart, Trash2 } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Trash2, Settings2, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 const fmt = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+interface CartItem {
+  key: string;
+  item: any;
+  qtd: number;
+  mods: Array<{ id_materia: number; nome: string; tipo: 'REMOVER' | 'ADICIONAR' }>;
+}
 
 const PDV = () => {
   const { empresaId } = useAuth();
   const [cardapio, setCardapio] = useState<any[]>([]);
-  const [carrinho, setCarrinho] = useState<Record<number, { item: any; qtd: number }>>({});
+  const [carrinho, setCarrinho] = useState<CartItem[]>([]);
   const [busy, setBusy] = useState(false);
+  
+  // Customization State
+  const [custItem, setCustItem] = useState<CartItem | null>(null);
+  const [availableMats, setAvailableMats] = useState<any[]>([]);
 
   useEffect(() => { document.title = "PDV · Vendas Pro"; }, []);
 
@@ -22,57 +40,212 @@ const PDV = () => {
       .then(({ data }) => setCardapio(data ?? []));
   }, [empresaId]);
 
-  const add = (item: any) => {
-    setCarrinho((c) => ({ ...c, [item.id]: { item, qtd: (c[item.id]?.qtd ?? 0) + 1 } }));
-  };
-  const dec = (id: number) => {
-    setCarrinho((c) => {
-      const cur = c[id];
-      if (!cur) return c;
-      if (cur.qtd <= 1) { const { [id]: _, ...rest } = c; return rest; }
-      return { ...c, [id]: { ...cur, qtd: cur.qtd - 1 } };
+  const add = (item: any, rowKey?: string) => {
+    if (rowKey) {
+      setCarrinho((prev) => prev.map(i => i.key === rowKey ? { ...i, qtd: i.qtd + 1 } : i));
+      return;
+    }
+
+    const key = `${item.id}-${JSON.stringify([])}`; // Default key for item without mods
+    setCarrinho((prev) => {
+      const existing = prev.find(i => i.key === key);
+      if (existing) {
+        return prev.map(i => i.key === key ? { ...i, qtd: i.qtd + 1 } : i);
+      }
+      return [...prev, { key, item, qtd: 1, mods: [] }];
     });
   };
-  const clear = () => setCarrinho({});
 
-  const total = Object.values(carrinho).reduce((s, x) => s + (x.item.Valor ?? 0) * x.qtd, 0);
-  const itensCount = Object.values(carrinho).reduce((s, x) => s + x.qtd, 0);
+  const decRow = (key: string) => {
+    setCarrinho((prev) => {
+      const row = prev.find(i => i.key === key);
+      if (!row) return prev;
+      if (row.qtd <= 1) return prev.filter(i => i.key !== key);
+      return prev.map(i => i.key === key ? { ...i, qtd: i.qtd - 1 } : i);
+    });
+  };
+
+  const removeRow = (key: string) => {
+    setCarrinho((prev) => prev.filter(i => i.key !== key));
+  };
+
+  const clear = () => setCarrinho([]);
+
+  const total = carrinho.reduce((s, x) => s + (x.item.Valor ?? 0) * x.qtd, 0);
+  const itensCount = carrinho.reduce((s, x) => s + x.qtd, 0);
+
+  const openCustomizer = async (cartItem: CartItem) => {
+    setCustItem(cartItem);
+    // Fetch materials linked to the products of this menu item
+    const { data: pc } = await supabase.from("ProduxCard")
+      .select("id_produto")
+      .eq("id_cardapio", cartItem.item.id);
+    
+    if (pc && pc.length > 0) {
+      const pids = pc.map(p => p.id_produto);
+      const { data: pm } = await supabase.from("ProduxMateria")
+        .select("id_materia, MateriaPrima:id_materia(nome)")
+        .in("id_produto", pids);
+      
+      const mats = (pm ?? []).map(m => ({
+        id: m.id_materia,
+        nome: (m as any).MateriaPrima?.nome || "Ingrediente"
+      }));
+      // Group by Name to ensure one toggle affects all instances in a combo
+      const groupedByName = Array.from(new Map(mats.map(m => [m.nome.toLowerCase(), m])).values());
+      setAvailableMats(groupedByName);
+    }
+  };
+
+  const toggleMod = (item: CartItem, matId: number, nome: string) => {
+    // We toggle by NAME to affect all IDs of that ingredient in a combo
+    const n = nome.toLowerCase();
+    const alreadyRemoved = item.mods.some(m => m.nome.toLowerCase() === n && m.tipo === 'REMOVER');
+    
+    let newMods;
+    if (alreadyRemoved) {
+      newMods = item.mods.filter(m => m.nome.toLowerCase() !== n);
+    } else {
+      // Find all IDs for this specific name in availableMats to record them all
+      // Actually, just storing the name is enough for the filter, but we need IDs for the DB table
+      // We'll store all current instance IDs for that name
+      const sameNameIds = availableMats.filter(am => am.nome.toLowerCase() === n).map(am => am.id);
+      const modsToAdd = sameNameIds.map(id => ({ id_materia: id, nome: nome, tipo: 'REMOVER' as const }));
+      newMods = [...item.mods, ...modsToAdd];
+    }
+
+    // Split the item if it has more than 1 quantity to customize only one
+    if (item.qtd > 1) {
+      const otherQtd = item.qtd - 1;
+      const newItem = { ...item, qtd: 1, mods: newMods, key: `${item.item.id}-${Date.now()}` };
+      setCarrinho(prev => [
+        ...prev.map(i => i.key === item.key ? { ...i, qtd: otherQtd } : i),
+        newItem
+      ]);
+      setCustItem(newItem);
+    } else {
+      setCarrinho(prev => prev.map(i => i.key === item.key ? { ...i, mods: newMods } : i));
+      setCustItem({ ...item, mods: newMods });
+    }
+  };
 
   const finalizar = async () => {
     if (!empresaId || itensCount === 0) return;
     setBusy(true);
     try {
-      const { data: venda, error: vErr } = await supabase
-        .from("Venda").insert({ id_empresa: empresaId }).select().single();
-      if (vErr) throw vErr;
+      // 1. Calculate Requirements (Mods aware)
+      const reqM: Record<number, { nome: string; qtd: number }> = {}; // Materias
+      const reqP: Record<number, { nome: string; qtd: number }> = {}; // Produtos
 
-      const pedidos: any[] = [];
-      Object.values(carrinho).forEach(({ item, qtd }) => {
-        for (let i = 0; i < qtd; i++) {
-          pedidos.push({ id_venda: venda.id, id_cardapio: item.id, id_empresa: empresaId });
-        }
-      });
-      const { error: pErr } = await supabase.from("Pedido").insert(pedidos);
-      if (pErr) throw pErr;
+      for (const row of carrinho) {
+        const { item, qtd, mods } = row;
+        // Map of NAMES to remove (more robust for combos)
+        const removedNames = new Set(mods.filter(m => m.tipo === 'REMOVER').map(m => m.nome.toLowerCase()));
 
-      // baixa de estoque (best-effort)
-      for (const { item, qtd } of Object.values(carrinho)) {
-        const { data: pc } = await supabase.from("ProduxCard").select("id_produto").eq("id_cardapio", item.id);
-        const prodIds = (pc ?? []).map((x: any) => x.id_produto).filter(Boolean);
-        if (prodIds.length === 0) continue;
-        const { data: pm } = await supabase.from("ProduxMateria").select("id_materia, quantidade").in("id_produto", prodIds);
-        for (const r of pm ?? []) {
-          const consumo = (r.quantidade ?? 0) * qtd;
-          const { data: est } = await supabase.from("Estoque").select("*").eq("id_materia", r.id_materia).order("id", { ascending: false }).limit(1).maybeSingle();
-          if (est) {
-            await supabase.from("Estoque").update({ quantidade: (est.quantidade ?? 0) - consumo }).eq("id", est.id);
+        const { data: pc } = await supabase.from("ProduxCard")
+          .select("id_produto, Produtos:id_produto(Nome, is_unique)")
+          .eq("id_cardapio", item.id);
+        
+        for (const p of pc ?? []) {
+          const isUnique = (p as any).Produtos?.is_unique;
+          if (isUnique) {
+            const pid = p.id_produto!;
+            reqP[pid] = { nome: (p as any).Produtos?.Nome || "Produto", qtd: (reqP[pid]?.qtd ?? 0) + qtd };
           } else {
-            await supabase.from("Estoque").insert({ id_materia: r.id_materia, quantidade: -consumo });
+            const { data: pm } = await supabase.from("ProduxMateria")
+              .select("id_materia, quantidade, MateriaPrima:id_materia(nome)")
+              .eq("id_produto", p.id_produto);
+            
+            if (!pm || pm.length === 0) {
+              const pid = p.id_produto!;
+              reqP[pid] = { nome: (p as any).Produtos?.Nome || "Produto", qtd: (reqP[pid]?.qtd ?? 0) + qtd };
+            } else {
+              for (const r of pm ?? []) {
+                const mid = Number(r.id_materia);
+                const mNome = ((r as any).MateriaPrima?.nome || "").toLowerCase();
+                
+                // SKIP if material name is in REMOVED list
+                if (removedNames.has(mNome)) continue;
+
+                reqM[mid] = { 
+                  nome: (r as any).MateriaPrima?.nome || "Ingrediente", 
+                  qtd: (reqM[mid]?.qtd ?? 0) + ((r.quantidade ?? 0) * qtd)
+                };
+              }
+            }
           }
         }
       }
 
-      toast.success(`Venda #${venda.id} registrada (${fmt(total)})`);
+      // 2. Validate Stock
+      const { data: estoque } = await supabase.from("Estoque").select("id, id_materia, id_produto, quantidade").eq("id_empresa", empresaId);
+      const saldosM: Record<number, number> = {};
+      const saldosP: Record<number, number> = {};
+      (estoque ?? []).forEach(e => {
+        if (e.id_materia) saldosM[e.id_materia] = (saldosM[e.id_materia] ?? 0) + (e.quantidade ?? 0);
+        if (e.id_produto) saldosP[e.id_produto] = (saldosP[e.id_produto] ?? 0) + (e.quantidade ?? 0);
+      });
+
+      const erros: string[] = [];
+      Object.entries(reqM).forEach(([id, r]) => { if ((saldosM[Number(id)] ?? 0) < r.qtd) erros.push(`${r.nome}: falta ${(r.qtd - (saldosM[Number(id)] ?? 0)).toFixed(2)}`); });
+      Object.entries(reqP).forEach(([id, r]) => { if ((saldosP[Number(id)] ?? 0) < r.qtd) erros.push(`${r.nome}: falta ${(r.qtd - (saldosP[Number(id)] ?? 0)).toFixed(0)}`); });
+      if (erros.length > 0) throw new Error("Estoque insuficiente:\n" + erros.join(", "));
+
+      // 3. Register Sale & Pedidos & Modificacoes
+      const { data: venda, error: vErr } = await supabase.from("Venda").insert({ id_empresa: empresaId }).select().single();
+      if (vErr) throw vErr;
+
+      for (const row of carrinho) {
+        // We process each unit individually to link mods correctly
+        for (let i = 0; i < row.qtd; i++) {
+          const { data: ped, error: pErr } = await supabase.from("Pedido")
+            .insert({ id_venda: venda.id, id_cardapio: row.item.id, id_empresa: empresaId })
+            .select().single();
+          if (pErr) throw pErr;
+
+          if (row.mods.length > 0) {
+            const modsToInsert = row.mods.map(m => ({
+              id_pedido: ped.id,
+              id_materia: m.id_materia,
+              tipo: m.tipo,
+              id_empresa: empresaId
+            }));
+            const { error: mErr } = await supabase.from("PedidoModificacao").insert(modsToInsert);
+            if (mErr) throw new Error(`Erro ao gravar modificações do pedido: ${mErr.message}`);
+          }
+        }
+      }
+
+      toast.info("Resumo da saída planejada: " + [
+        ...Object.values(reqM).map(m => `${m.qtd.toFixed(2)}x ${m.nome}`),
+        ...Object.values(reqP).map(p => `${p.qtd}x ${p.nome}`)
+      ].join(", "));
+
+      // 4. Perform Deductions
+      for (const [id, r] of Object.entries(reqM)) {
+        if (r.qtd <= 0) continue; // DO NOT update if amount is zero
+        const mid = Number(id);
+        const row = (estoque ?? []).find(e => e.id_materia === mid);
+        if (row) {
+          const { error: err } = await supabase.from("Estoque").update({ quantidade: (row.quantidade ?? 0) - r.qtd }).eq("id", row.id);
+          if (err) throw new Error(`Erro ao atualizar estoque de ${r.nome}: ${err.message}`);
+        } else {
+          await supabase.from("Estoque").insert({ id_materia: mid, quantidade: -r.qtd, id_empresa: Number(empresaId) } as any);
+        }
+      }
+      for (const [id, r] of Object.entries(reqP)) {
+        if (r.qtd <= 0) continue;
+        const pid = Number(id);
+        const row = (estoque ?? []).find(e => e.id_produto === pid);
+        if (row) {
+          const { error: err } = await supabase.from("Estoque").update({ quantidade: (row.quantidade ?? 0) - r.qtd }).eq("id", row.id);
+          if (err) throw new Error(`Erro ao atualizar estoque de ${r.nome}: ${err.message}`);
+        } else {
+          await supabase.from("Estoque").insert({ id_produto: pid, quantidade: -r.qtd, id_empresa: Number(empresaId) } as any);
+        }
+      }
+
+      toast.success(`Venda #${venda.id} registrada com sucesso`);
       clear();
     } catch (err: any) {
       toast.error(err.message ?? "Erro ao registrar venda");
@@ -114,15 +287,34 @@ const PDV = () => {
           {itensCount > 0 && <span className="ml-auto text-xs text-muted-foreground">{itensCount} item(s)</span>}
         </div>
         <div className="space-y-2 max-h-[50vh] overflow-y-auto">
-          {Object.values(carrinho).map(({ item, qtd }) => (
-            <div key={item.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/40">
-              <div className="flex-1">
-                <div className="text-sm font-medium">{item.Nome}</div>
-                <div className="text-xs text-muted-foreground">{fmt(item.Valor ?? 0)}</div>
+          {carrinho.map((row) => (
+            <div key={row.key} className="p-2 rounded-md bg-muted/40 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{row.item.Nome}</div>
+                  <div className="text-xs text-muted-foreground">{fmt(row.item.Valor ?? 0)}</div>
+                  {row.mods.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {row.mods.map((m, idx) => (
+                        <span key={idx} className="text-[10px] bg-destructive/10 text-destructive px-1 rounded uppercase font-bold">
+                          sem {m.nome}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button size="icon" variant="ghost" onClick={() => decRow(row.key)}><Minus className="h-3 w-3" /></Button>
+                <span className="w-6 text-center text-sm">{row.qtd}</span>
+                <Button size="icon" variant="ghost" onClick={() => add(row.item, row.key)}><Plus className="h-3 w-3" /></Button>
               </div>
-              <Button size="icon" variant="ghost" onClick={() => dec(item.id)}><Minus className="h-3 w-3" /></Button>
-              <span className="w-6 text-center text-sm">{qtd}</span>
-              <Button size="icon" variant="ghost" onClick={() => add(item)}><Plus className="h-3 w-3" /></Button>
+              <div className="flex justify-end gap-1">
+                <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={() => openCustomizer(row)}>
+                  <Settings2 className="h-3 w-3 mr-1" /> Customizar
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-[10px] text-destructive" onClick={() => removeRow(row.key)}>
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           ))}
           {itensCount === 0 && <p className="text-sm text-muted-foreground text-center py-6">Carrinho vazio</p>}
@@ -140,6 +332,37 @@ const PDV = () => {
           </Button>
         </div>
       </Card>
+
+      {/* Customization Dialog */}
+      <Dialog open={!!custItem} onOpenChange={(o) => !o && setCustItem(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Customizar {custItem?.item.Nome}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="text-sm font-medium text-muted-foreground">O que retirar?</div>
+            <div className="grid grid-cols-2 gap-2">
+              {availableMats.map((m) => {
+                const isRemoved = custItem?.mods.some(mod => mod.id_materia === m.id && mod.tipo === 'REMOVER');
+                return (
+                  <Button
+                    key={m.id}
+                    variant={isRemoved ? "destructive" : "outline"}
+                    className="justify-start text-xs h-9"
+                    onClick={() => custItem && toggleMod(custItem, m.id, m.nome)}
+                  >
+                    {isRemoved ? <X className="h-3 w-3 mr-2" /> : <Plus className="h-3 w-3 mr-2 text-muted-foreground" />}
+                    {m.nome}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCustItem(null)}>Concluir</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -21,34 +21,179 @@ const Gastos = () => {
   const [valor, setValor] = useState("");
   const [idCat, setIdCat] = useState("");
   const [idMat, setIdMat] = useState("");
+  const [idProd, setIdProd] = useState("");
+  const [fator, setFator] = useState("");
+  const [uniques, setUniques] = useState<any[]>([]);
 
   useEffect(() => { document.title = "Gastos · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
-    const { data } = await supabase.from("Gastos")
-      .select("*, Categoria:id_categoria(Nome), MateriaPrima:id_materia(nome)")
+    const { data, error } = await supabase.from("Gastos")
+      .select(`
+        *,
+        Categoria:id_categoria(Nome),
+        MateriaPrima:id_materia(nome),
+        Produtos:id_produto(Nome)
+      `)
       .eq("id_empresa", empresaId).order("created_at", { ascending: false });
+    
+    if (error) {
+      console.error("Erro ao carregar gastos:", error);
+      toast.error("Erro ao carregar dados: " + error.message);
+      return;
+    }
     setItems(data ?? []);
     const { data: c } = await supabase.from("Categoria").select("*").eq("id_empresa", empresaId);
     setCategorias(c ?? []);
     const { data: m } = await supabase.from("MateriaPrima").select("*").eq("id_empresa", empresaId);
     setMaterias(m ?? []);
+    const { data: u } = await supabase.from("Produtos").select("*").eq("id_empresa", empresaId).eq("is_unique", true);
+    setUniques(u ?? []);
   };
   useEffect(() => { load(); }, [empresaId]);
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empresaId || !idCat || !valor) return;
-    const { error } = await supabase.from("Gastos").insert({
+    
+    const valorNum = parseFloat(valor) || 0;
+    const fatorNum = parseFloat(fator) || 0;
+    const matId = idMat ? parseInt(idMat) : null;
+    const prodId = idProd ? parseInt(idProd) : null;
+
+    const { error: gastoError } = await supabase.from("Gastos").insert({
       id_empresa: empresaId,
       id_categoria: parseInt(idCat),
-      Valor: parseFloat(valor),
-      id_materia: idMat ? parseInt(idMat) : null,
-    });
-    if (error) return toast.error(error.message);
-    setValor(""); setIdMat("");
-    toast.success("Gasto registrado");
+      Valor: valorNum,
+      id_materia: matId,
+      id_produto: prodId,
+      Fator: (matId || prodId) ? fatorNum : null,
+    } as any);
+
+    if (gastoError) return toast.error(gastoError.message);
+
+    if (matId) {
+      toast.info("Atualizando estoque de matéria-prima...");
+      // 1. Get current stock
+      const { data: stockData } = await supabase.from("Estoque")
+        .select("quantidade")
+        .eq("id_materia", matId);
+      const currentStock = (stockData ?? []).reduce((s, r) => s + (r.quantidade ?? 0), 0);
+
+      // 2. Get current mat cost
+      const { data: matData } = await supabase.from("MateriaPrima")
+        .select("Custo")
+        .eq("id", matId)
+        .single();
+      const currentCost = matData?.Custo ?? 0;
+
+      // 3. Calc new weighted average cost
+      let newCost = currentCost;
+      if (fatorNum > 0) {
+        if (currentStock <= 0) {
+          newCost = valorNum / fatorNum;
+        } else {
+          // Weighted Average: (Total Value in Stock + New Purchase Value) / (Total Quantities)
+          newCost = ((currentStock * currentCost) + valorNum) / (currentStock + fatorNum);
+        }
+      }
+
+      // 4. Update MateriaPrima unit cost
+      const { error: costErr } = await supabase.from("MateriaPrima").update({ Custo: newCost }).eq("id", matId);
+      if (costErr) return toast.error("Erro ao atualizar custo da MP: " + costErr.message);
+
+      // 5. Update Estoque (Upsert Logic)
+      if (fatorNum > 0) {
+        const { data: existing } = await supabase.from("Estoque")
+          .select("id, quantidade")
+          .eq("id_materia", matId)
+          .eq("id_empresa", empresaId)
+          .maybeSingle();
+        
+        if (existing) {
+          await supabase.from("Estoque").update({ 
+            quantidade: (existing.quantidade ?? 0) + fatorNum 
+          }).eq("id", existing.id);
+        } else {
+          await supabase.from("Estoque").insert({ 
+            id_materia: matId, 
+            quantidade: fatorNum,
+            id_empresa: Number(empresaId)
+          } as any);
+        }
+      }
+
+      // 6. Recalc all Products using this material
+      const { data: prodsToUpdate } = await supabase.from("ProduxMateria")
+        .select("id_produto")
+        .eq("id_materia", matId);
+      
+      const uniqueProdIds = Array.from(new Set((prodsToUpdate ?? []).map(p => p.id_produto)));
+      
+      for (const pid of uniqueProdIds) {
+        const { data: pmData } = await supabase.from("ProduxMateria")
+          .select("quantidade, MateriaPrima:id_materia(Custo)")
+          .eq("id_produto", pid);
+        const prodTotalCusto = (pmData ?? []).reduce((s, r: any) => s + (r.MateriaPrima?.Custo ?? 0) * (r.quantidade ?? 0), 0);
+        await supabase.from("Produtos").update({ Custo: prodTotalCusto }).eq("id", pid);
+      }
+    }
+
+    if (prodId) {
+      console.log("Atualizando estoque/custo para produto:", prodId, "Qtd:", fatorNum);
+      toast.info("Atualizando estoque de produto...");
+      // 1. Get current stock
+      const { data: stockData } = await supabase.from("Estoque")
+        .select("quantidade")
+        .eq("id_produto", prodId);
+      const currentStock = (stockData ?? []).reduce((s, r) => s + (r.quantidade ?? 0), 0);
+
+      // 2. Get current prod cost
+      const { data: prodData } = await supabase.from("Produtos")
+        .select("Custo")
+        .eq("id", prodId)
+        .single();
+      const currentCost = prodData?.Custo ?? 0;
+
+      // 3. Calc new cost
+      let newCost = currentCost;
+      if (fatorNum > 0) {
+        if (currentStock <= 0) {
+          newCost = valorNum / fatorNum;
+        } else {
+          newCost = ((currentStock * currentCost) + valorNum) / (currentStock + fatorNum);
+        }
+      }
+
+      // 4. Update Produtos cost
+      const { error: costErr } = await supabase.from("Produtos").update({ Custo: newCost }).eq("id", prodId);
+      if (costErr) return toast.error("Erro ao atualizar custo do produto: " + costErr.message);
+
+      // 5. Update Estoque (Upsert Logic)
+      if (fatorNum > 0) {
+        const { data: existing } = await supabase.from("Estoque")
+          .select("id, quantidade")
+          .eq("id_produto", prodId)
+          .eq("id_empresa", empresaId)
+          .maybeSingle();
+        
+        if (existing) {
+          await supabase.from("Estoque").update({ 
+            quantidade: (existing.quantidade ?? 0) + fatorNum 
+          }).eq("id", existing.id);
+        } else {
+          await supabase.from("Estoque").insert({ 
+            id_produto: prodId, 
+            quantidade: fatorNum,
+            id_empresa: Number(empresaId)
+          } as any);
+        }
+      }
+    }
+
+    setValor(""); setIdMat(""); setIdProd(""); setFator("");
+    toast.success("Gasto registrado e custos atualizados");
     load();
   };
 
@@ -77,7 +222,13 @@ const Gastos = () => {
         <form onSubmit={add} className="grid md:grid-cols-4 gap-3 items-end">
           <div className="space-y-2">
             <Label>Categoria</Label>
-            <Select value={idCat} onValueChange={setIdCat}>
+            <Select value={idCat} onValueChange={(val) => {
+              setIdCat(val);
+              const cat = categorias.find(c => String(c.id) === val);
+              const isMP = cat?.Nome?.toLowerCase().includes("materia");
+              const isUP = cat?.Nome?.toLowerCase().includes("revenda") || cat?.Nome?.toLowerCase().includes("único") || cat?.Nome?.toLowerCase().includes("unico");
+              if (!isMP && !isUP) { setIdMat(""); setIdProd(""); setFator(""); }
+            }}>
               <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent>
                 {categorias.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.Nome}</SelectItem>)}
@@ -88,16 +239,47 @@ const Gastos = () => {
             <Label>Valor (R$)</Label>
             <Input type="number" step="0.01" required value={valor} onChange={(e) => setValor(e.target.value)} />
           </div>
-          <div className="space-y-2">
-            <Label>Matéria-prima (opcional)</Label>
-            <Select value={idMat} onValueChange={setIdMat}>
-              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-              <SelectContent>
-                {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button type="submit"><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
+          {categorias.find(c => String(c.id) === idCat)?.Nome?.toLowerCase().includes("materia") && (
+            <>
+              <div className="space-y-2">
+                <Label>Matéria-prima</Label>
+                <Select value={idMat} onValueChange={setIdMat}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {idMat && (
+                <div className="space-y-2">
+                  <Label>Quantidade/Fator</Label>
+                  <Input type="number" step="0.01" required value={fator} onChange={(e) => setFator(e.target.value)} placeholder="Ex: 5kg" />
+                </div>
+              )}
+            </>
+          )}
+
+          {categorias.find(c => String(c.id) === idCat)?.Nome?.toLowerCase().includes("revenda") || categorias.find(c => String(c.id) === idCat)?.Nome?.toLowerCase().includes("único") || categorias.find(c => String(c.id) === idCat)?.Nome?.toLowerCase().includes("unico") ? (
+            <>
+              <div className="space-y-2">
+                <Label>Produto para Revenda</Label>
+                <Select value={idProd} onValueChange={setIdProd}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o produto" /></SelectTrigger>
+                  <SelectContent>
+                    {uniques.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.Nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {idProd && (
+                <div className="space-y-2">
+                  <Label>Quantidade</Label>
+                  <Input type="number" step="0.01" required value={fator} onChange={(e) => setFator(e.target.value)} placeholder="Qtd" />
+                </div>
+              )}
+            </>
+          ) : null}
+
+          <Button type="submit" className={(idMat || idProd) ? "md:col-span-4" : ""}><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
         </form>
       </Card>
 
@@ -107,7 +289,7 @@ const Gastos = () => {
             <tr>
               <th className="text-left px-4 py-2">Data</th>
               <th className="text-left px-4 py-2">Categoria</th>
-              <th className="text-left px-4 py-2">Matéria-prima</th>
+              <th className="text-left px-4 py-2">Item (MP/Revenda)</th>
               <th className="text-right px-4 py-2">Valor</th>
               <th></th>
             </tr>
@@ -117,7 +299,7 @@ const Gastos = () => {
               <tr key={g.id} className="border-t border-border">
                 <td className="px-4 py-2">{fmtDate(g.created_at)}</td>
                 <td className="px-4 py-2">{g.Categoria?.Nome ?? "—"}</td>
-                <td className="px-4 py-2">{g.MateriaPrima?.nome ?? "—"}</td>
+                <td className="px-4 py-2">{g.MateriaPrima?.nome || g.Produtos?.Nome || "—"}</td>
                 <td className="px-4 py-2 text-right text-destructive font-medium">{fmt(g.Valor)}</td>
                 <td className="px-4 py-2 text-right">
                   <Button size="sm" variant="ghost" onClick={() => remove(g.id)}>
