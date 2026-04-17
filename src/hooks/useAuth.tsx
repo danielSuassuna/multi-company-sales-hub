@@ -32,11 +32,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .maybeSingle();
     const eid = (profile?.id_empresa as number | null) ?? null;
     setEmpresaId(eid);
-    // @ts-expect-error - relação dinâmica
-    setEmpresaNome(profile?.Empresa?.Nome ?? null);
+    setEmpresaNome((profile as any)?.Empresa?.Nome ?? null);
 
     const { data: r } = await supabase.from("user_roles").select("role").eq("user_id", uid);
-    setRoles((r ?? []).map((x) => x.role as AppRole));
+    setRoles(((r ?? []) as any[]).map((x) => x.role as AppRole));
   };
 
   useEffect(() => {
