@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Plus, Minus, ShoppingCart, Trash2, Settings2, X } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -25,35 +26,40 @@ interface CartItem {
 const PDV = () => {
   const { empresaId } = useAuth();
   const [cardapio, setCardapio] = useState<any[]>([]);
+  const [produtos, setProdutos] = useState<any[]>([]);
   const [carrinho, setCarrinho] = useState<CartItem[]>([]);
   const [busy, setBusy] = useState(false);
   
   // Customization State
   const [custItem, setCustItem] = useState<CartItem | null>(null);
   const [availableMats, setAvailableMats] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { document.title = "PDV · Vendas Pro"; }, []);
 
   useEffect(() => {
     if (!empresaId) return;
-    supabase.from("Cardapio").select("*").eq("id_empresa", empresaId).order("Nome")
-      .then(({ data }) => setCardapio(data ?? []));
+    setLoading(true);
+    Promise.all([
+      supabase.from("Cardapio").select("*").eq("id_empresa", empresaId).order("Nome"),
+      supabase.from("Produtos").select("*").eq("id_empresa", empresaId).order("Nome")
+    ]).then(([{ data: cData }, { data: pData }]) => {
+       setCardapio(cData ?? []);
+       setProdutos(pData ?? []);
+       setLoading(false);
+    });
   }, [empresaId]);
 
-  const add = (item: any, rowKey?: string) => {
+  const add = (item: any, type: "cardapio" | "produto", rowKey?: string) => {
     if (rowKey) {
       setCarrinho((prev) => prev.map(i => i.key === rowKey ? { ...i, qtd: i.qtd + 1 } : i));
       return;
     }
 
-    const key = `${item.id}-${JSON.stringify([])}`; // Default key for item without mods
-    setCarrinho((prev) => {
-      const existing = prev.find(i => i.key === key);
-      if (existing) {
-        return prev.map(i => i.key === key ? { ...i, qtd: i.qtd + 1 } : i);
-      }
-      return [...prev, { key, item, qtd: 1, mods: [] }];
-    });
+    const valor = type === "produto" ? item.Preco_venda : item.Valor;
+    const standardItem = { ...item, type, Valor: valor };
+    const key = `${type}-${item.id}-${Date.now()}-${Math.random()}`; // Unique key prevents automatic grouping
+    setCarrinho((prev) => [...prev, { key, item: standardItem, qtd: 1, mods: [] }]);
   };
 
   const decRow = (key: string) => {
@@ -76,25 +82,39 @@ const PDV = () => {
 
   const openCustomizer = async (cartItem: CartItem) => {
     setCustItem(cartItem);
+    let mats: any[] = [];
+
     // Fetch materials linked to the products of this menu item
-    const { data: pc } = await supabase.from("ProduxCard")
-      .select("id_produto")
-      .eq("id_cardapio", cartItem.item.id);
-    
-    if (pc && pc.length > 0) {
-      const pids = pc.map(p => p.id_produto);
+    if (cartItem.item.type === "cardapio") {
+      const { data: pc } = await supabase.from("ProduxCard")
+        .select("id_produto")
+        .eq("id_cardapio", cartItem.item.id);
+      
+      if (pc && pc.length > 0) {
+        const pids = pc.map(p => p.id_produto);
+        const { data: pm } = await supabase.from("ProduxMateria")
+          .select("id_materia, MateriaPrima:id_materia(nome)")
+          .in("id_produto", pids);
+        
+        mats = (pm ?? []).map(m => ({
+          id: m.id_materia,
+          nome: (m as any).MateriaPrima?.nome || "Ingrediente"
+        }));
+      }
+    } else {
       const { data: pm } = await supabase.from("ProduxMateria")
         .select("id_materia, MateriaPrima:id_materia(nome)")
-        .in("id_produto", pids);
+        .eq("id_produto", cartItem.item.id);
       
-      const mats = (pm ?? []).map(m => ({
+      mats = (pm ?? []).map(m => ({
         id: m.id_materia,
         nome: (m as any).MateriaPrima?.nome || "Ingrediente"
       }));
-      // Group by Name to ensure one toggle affects all instances in a combo
-      const groupedByName = Array.from(new Map(mats.map(m => [m.nome.toLowerCase(), m])).values());
-      setAvailableMats(groupedByName);
     }
+
+    // Group by Name to ensure one toggle affects all instances in a combo
+    const groupedByName = Array.from(new Map(mats.map(m => [m.nome.toLowerCase(), m])).values());
+    setAvailableMats(groupedByName);
   };
 
   const toggleMod = (item: CartItem, matId: number, nome: string) => {
@@ -142,29 +162,54 @@ const PDV = () => {
         // Map of NAMES to remove (more robust for combos)
         const removedNames = new Set(mods.filter(m => m.tipo === 'REMOVER').map(m => m.nome.toLowerCase()));
 
-        const { data: pc } = await supabase.from("ProduxCard")
-          .select("id_produto, Produtos:id_produto(Nome, is_unique)")
-          .eq("id_cardapio", item.id);
-        
-        for (const p of pc ?? []) {
-          const isUnique = (p as any).Produtos?.is_unique;
+        if (item.type === "cardapio") {
+          const { data: pc } = await supabase.from("ProduxCard")
+            .select("id_produto, Produtos:id_produto(Nome, is_unique)")
+            .eq("id_cardapio", item.id);
+          
+          for (const p of pc ?? []) {
+            const isUnique = (p as any).Produtos?.is_unique;
+            if (isUnique) {
+              const pid = p.id_produto!;
+              reqP[pid] = { nome: (p as any).Produtos?.Nome || "Produto", qtd: (reqP[pid]?.qtd ?? 0) + qtd };
+            } else {
+              const { data: pm } = await supabase.from("ProduxMateria")
+                .select("id_materia, quantidade, MateriaPrima:id_materia(nome)")
+                .eq("id_produto", p.id_produto);
+              
+              if (!pm || pm.length === 0) {
+                const pid = p.id_produto!;
+                reqP[pid] = { nome: (p as any).Produtos?.Nome || "Produto", qtd: (reqP[pid]?.qtd ?? 0) + qtd };
+              } else {
+                for (const r of pm ?? []) {
+                  const mid = Number(r.id_materia);
+                  const mNome = ((r as any).MateriaPrima?.nome || "").toLowerCase();
+                  if (removedNames.has(mNome)) continue;
+
+                  reqM[mid] = { 
+                    nome: (r as any).MateriaPrima?.nome || "Ingrediente", 
+                    qtd: (reqM[mid]?.qtd ?? 0) + ((r.quantidade ?? 0) * qtd)
+                  };
+                }
+              }
+            }
+          }
+        } else {
+          // Direct Product Item
+          const isUnique = item.is_unique;
           if (isUnique) {
-            const pid = p.id_produto!;
-            reqP[pid] = { nome: (p as any).Produtos?.Nome || "Produto", qtd: (reqP[pid]?.qtd ?? 0) + qtd };
+            reqP[item.id] = { nome: item.Nome, qtd: (reqP[item.id]?.qtd ?? 0) + qtd };
           } else {
             const { data: pm } = await supabase.from("ProduxMateria")
               .select("id_materia, quantidade, MateriaPrima:id_materia(nome)")
-              .eq("id_produto", p.id_produto);
+              .eq("id_produto", item.id);
             
             if (!pm || pm.length === 0) {
-              const pid = p.id_produto!;
-              reqP[pid] = { nome: (p as any).Produtos?.Nome || "Produto", qtd: (reqP[pid]?.qtd ?? 0) + qtd };
+              reqP[item.id] = { nome: item.Nome, qtd: (reqP[item.id]?.qtd ?? 0) + qtd };
             } else {
               for (const r of pm ?? []) {
                 const mid = Number(r.id_materia);
                 const mNome = ((r as any).MateriaPrima?.nome || "").toLowerCase();
-                
-                // SKIP if material name is in REMOVED list
                 if (removedNames.has(mNome)) continue;
 
                 reqM[mid] = { 
@@ -198,8 +243,12 @@ const PDV = () => {
       for (const row of carrinho) {
         // We process each unit individually to link mods correctly
         for (let i = 0; i < row.qtd; i++) {
+          const payload: any = { id_venda: venda.id, id_empresa: empresaId };
+          if (row.item.type === "cardapio") payload.id_cardapio = row.item.id;
+          else payload.id_produto = row.item.id;
+
           const { data: ped, error: pErr } = await supabase.from("Pedido")
-            .insert({ id_venda: venda.id, id_cardapio: row.item.id, id_empresa: empresaId })
+            .insert(payload)
             .select().single();
           if (pErr) throw pErr;
 
@@ -254,6 +303,14 @@ const PDV = () => {
     }
   };
 
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid lg:grid-cols-[1fr,360px] gap-6 max-w-7xl mx-auto">
       <div className="space-y-4">
@@ -261,23 +318,57 @@ const PDV = () => {
           <h1 className="text-3xl font-semibold">PDV</h1>
           <p className="text-muted-foreground">Toque para adicionar ao pedido</p>
         </header>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {cardapio.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => add(c)}
-              className="text-left p-4 rounded-lg border border-border bg-card hover:border-primary hover:shadow-elegant transition-all"
-            >
-              <div className="font-medium">{c.Nome}</div>
-              <div className="text-primary text-sm mt-1">{fmt(c.Valor ?? 0)}</div>
-            </button>
-          ))}
-          {cardapio.length === 0 && (
-            <Card className="col-span-full p-6 text-center text-muted-foreground">
-              Cadastre itens no Cardápio para começar a vender.
-            </Card>
-          )}
-        </div>
+        <Tabs defaultValue="cardapio" className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-4">
+            <TabsTrigger value="cardapio">Menu e Combos</TabsTrigger>
+            <TabsTrigger value="produtos">Itens Avulsos</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="cardapio" className="outline-none mt-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              
+              {!loading && cardapio.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => add(c, "cardapio")}
+                  className="text-left p-4 rounded-lg border border-border bg-card hover:border-primary hover:shadow-elegant transition-all"
+                >
+                  <div className="font-medium">{c.Nome}</div>
+                  <div className="text-primary text-sm mt-1">{fmt(c.Valor ?? 0)}</div>
+                </button>
+              ))}
+              {!loading && cardapio.length === 0 && (
+                <Card className="col-span-full p-6 text-center text-muted-foreground">
+                  Cadastre itens no Cardápio para começar a vender.
+                </Card>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="produtos" className="outline-none mt-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              
+              {!loading && produtos.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => add(p, "produto")}
+                  className="text-left p-4 rounded-lg border border-border bg-card hover:border-primary hover:shadow-elegant transition-all"
+                >
+                  <div className="font-medium flex items-center gap-1">
+                    {p.Nome}
+                    {p.is_unique && <span className="text-[9px] uppercase bg-muted text-muted-foreground px-1 py-0.5 rounded ml-1">PRONTO</span>}
+                  </div>
+                  <div className="text-primary text-sm mt-1">{fmt(p.Preco_venda ?? 0)}</div>
+                </button>
+              ))}
+              {!loading && produtos.length === 0 && (
+                <Card className="col-span-full p-6 text-center text-muted-foreground">
+                  Sem produtos cadastrados.
+                </Card>
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       <Card className="p-4 h-fit lg:sticky lg:top-4 shadow-card">
@@ -305,7 +396,7 @@ const PDV = () => {
                 </div>
                 <Button size="icon" variant="ghost" onClick={() => decRow(row.key)}><Minus className="h-3 w-3" /></Button>
                 <span className="w-6 text-center text-sm">{row.qtd}</span>
-                <Button size="icon" variant="ghost" onClick={() => add(row.item, row.key)}><Plus className="h-3 w-3" /></Button>
+                <Button size="icon" variant="ghost" onClick={() => add(row.item, row.item.type as any, row.key)}><Plus className="h-3 w-3" /></Button>
               </div>
               <div className="flex justify-end gap-1">
                 <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={() => openCustomizer(row)}>

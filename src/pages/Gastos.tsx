@@ -24,11 +24,15 @@ const Gastos = () => {
   const [idProd, setIdProd] = useState("");
   const [fator, setFator] = useState("");
   const [uniques, setUniques] = useState<any[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { document.title = "Gastos · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
+    setLoading(true);
     const { data, error } = await supabase.from("Gastos")
       .select(`
         *,
@@ -41,6 +45,7 @@ const Gastos = () => {
     if (error) {
       console.error("Erro ao carregar gastos:", error);
       toast.error("Erro ao carregar dados: " + error.message);
+      setLoading(false);
       return;
     }
     setItems(data ?? []);
@@ -50,28 +55,41 @@ const Gastos = () => {
     setMaterias(m ?? []);
     const { data: u } = await supabase.from("Produtos").select("*").eq("id_empresa", empresaId).eq("is_unique", true);
     setUniques(u ?? []);
+    setLoading(false);
   };
   useEffect(() => { load(); }, [empresaId]);
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!empresaId || !idCat || !valor) return;
+    if (!empresaId || !idCat || !valor || isSubmitting) return;
     
-    const valorNum = parseFloat(valor) || 0;
-    const fatorNum = parseFloat(fator) || 0;
-    const matId = idMat ? parseInt(idMat) : null;
-    const prodId = idProd ? parseInt(idProd) : null;
+    setIsSubmitting(true);
+    try {
+      const valorNum = parseFloat(valor) || 0;
+      let fatorNum = parseFloat(fator) || 0;
+      const matId = idMat ? parseInt(idMat) : null;
+      const prodId = idProd ? parseInt(idProd) : null;
 
-    const { error: gastoError } = await supabase.from("Gastos").insert({
-      id_empresa: empresaId,
-      id_categoria: parseInt(idCat),
-      Valor: valorNum,
-      id_materia: matId,
-      id_produto: prodId,
-      Fator: (matId || prodId) ? fatorNum : null,
-    } as any);
+      if (matId) {
+        const mat = materias.find(m => m.id === matId);
+        if (mat?.unidade_medida === 'kg') {
+          fatorNum = fatorNum * 1000;
+        }
+      }
 
-    if (gastoError) return toast.error(gastoError.message);
+      const { error: gastoError } = await supabase.from("Gastos").insert({
+        id_empresa: empresaId,
+        id_categoria: parseInt(idCat),
+        Valor: valorNum,
+        id_materia: matId,
+        id_produto: prodId,
+        Fator: (matId || prodId) ? fatorNum : null,
+      } as any);
+
+      if (gastoError) {
+        toast.error(gastoError.message);
+        return;
+      }
 
     if (matId) {
       toast.info("Atualizando estoque de matéria-prima...");
@@ -99,9 +117,11 @@ const Gastos = () => {
         }
       }
 
-      // 4. Update MateriaPrima unit cost
-      const { error: costErr } = await supabase.from("MateriaPrima").update({ Custo: newCost }).eq("id", matId);
-      if (costErr) return toast.error("Erro ao atualizar custo da MP: " + costErr.message);
+        const { error: costErr } = await supabase.from("MateriaPrima").update({ Custo: newCost }).eq("id", matId);
+        if (costErr) {
+          toast.error("Erro ao atualizar custo da MP: " + costErr.message);
+          return;
+        }
 
       // 5. Update Estoque (Upsert Logic)
       if (fatorNum > 0) {
@@ -129,16 +149,16 @@ const Gastos = () => {
         .select("id_produto")
         .eq("id_materia", matId);
       
-      const uniqueProdIds = Array.from(new Set((prodsToUpdate ?? []).map(p => p.id_produto)));
-      
-      for (const pid of uniqueProdIds) {
-        const { data: pmData } = await supabase.from("ProduxMateria")
-          .select("quantidade, MateriaPrima:id_materia(Custo)")
-          .eq("id_produto", pid);
-        const prodTotalCusto = (pmData ?? []).reduce((s, r: any) => s + (r.MateriaPrima?.Custo ?? 0) * (r.quantidade ?? 0), 0);
-        await supabase.from("Produtos").update({ Custo: prodTotalCusto }).eq("id", pid);
+        const uniqueProdIds = Array.from(new Set((prodsToUpdate ?? []).map(p => p.id_produto)));
+        
+        await Promise.all(uniqueProdIds.map(async (pid) => {
+          const { data: pmData } = await supabase.from("ProduxMateria")
+            .select("quantidade, MateriaPrima:id_materia(Custo)")
+            .eq("id_produto", pid);
+          const prodTotalCusto = (pmData ?? []).reduce((s, r: any) => s + (r.MateriaPrima?.Custo ?? 0) * (r.quantidade ?? 0), 0);
+          await supabase.from("Produtos").update({ Custo: prodTotalCusto }).eq("id", pid);
+        }));
       }
-    }
 
     if (prodId) {
       console.log("Atualizando estoque/custo para produto:", prodId, "Qtd:", fatorNum);
@@ -166,9 +186,11 @@ const Gastos = () => {
         }
       }
 
-      // 4. Update Produtos cost
-      const { error: costErr } = await supabase.from("Produtos").update({ Custo: newCost }).eq("id", prodId);
-      if (costErr) return toast.error("Erro ao atualizar custo do produto: " + costErr.message);
+        const { error: costErr } = await supabase.from("Produtos").update({ Custo: newCost }).eq("id", prodId);
+        if (costErr) {
+          toast.error("Erro ao atualizar custo do produto: " + costErr.message);
+          return;
+        }
 
       // 5. Update Estoque (Upsert Logic)
       if (fatorNum > 0) {
@@ -192,18 +214,33 @@ const Gastos = () => {
       }
     }
 
-    setValor(""); setIdMat(""); setIdProd(""); setFator("");
-    toast.success("Gasto registrado e custos atualizados");
-    load();
+      setValor(""); setIdMat(""); setIdProd(""); setFator("");
+      toast.success("Gasto registrado e custos atualizados");
+      await load();
+    } catch (e: any) {
+      console.error(e);
+      toast.error("Erro inesperado ao registrar gasto");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const remove = async (id: number) => {
-    const { error } = await supabase.from("Gastos").delete().eq("id", id);
+    if (!empresaId) return;
+    const { error } = await supabase.from("Gastos").delete().eq("id", id).eq("id_empresa", empresaId);
     if (error) return toast.error(error.message);
     load();
   };
 
   const total = items.reduce((s, g) => s + (g.Valor ?? 0), 0);
+
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -246,14 +283,22 @@ const Gastos = () => {
                 <Select value={idMat} onValueChange={setIdMat}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
-                    {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
+                    {materias.map((m) => {
+                      const und = m.unidade_medida || 'un';
+                      return <SelectItem key={m.id} value={String(m.id)}>{m.nome} ({und})</SelectItem>
+                    })}
                   </SelectContent>
                 </Select>
               </div>
               {idMat && (
-                <div className="space-y-2">
-                  <Label>Quantidade/Fator</Label>
-                  <Input type="number" step="0.01" required value={fator} onChange={(e) => setFator(e.target.value)} placeholder="Ex: 5kg" />
+                 <div className="space-y-2">
+                  <Label>
+                    {materias.find(m => String(m.id) === idMat)?.unidade_medida === 'kg' ? 'Quantidade (em kg)' :
+                     materias.find(m => String(m.id) === idMat)?.unidade_medida === 'g' ? 'Gramas (g)' : 'Quantidade (un)'}
+                  </Label>
+                  <Input type="number" step="0.01" required value={fator} onChange={(e) => setFator(e.target.value)} placeholder={
+                    materias.find(m => String(m.id) === idMat)?.unidade_medida === 'kg' ? "Ex: 5" : "Qtd"
+                  } />
                 </div>
               )}
             </>
@@ -279,7 +324,9 @@ const Gastos = () => {
             </>
           ) : null}
 
-          <Button type="submit" className={(idMat || idProd) ? "md:col-span-4" : ""}><Plus className="h-4 w-4 mr-1" /> Adicionar</Button>
+          <Button type="submit" disabled={isSubmitting} className={(idMat || idProd) ? "md:col-span-4" : ""}>
+            {isSubmitting ? "Cadastrando..." : <><Plus className="h-4 w-4 mr-1" /> Adicionar</>}
+          </Button>
         </form>
       </Card>
 
@@ -294,12 +341,24 @@ const Gastos = () => {
               <th></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
+            {loading ? (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-muted-foreground animate-pulse">Carregando gastos...</td></tr>
+            ) : (
+              <>
             {items.map((g) => (
-              <tr key={g.id} className="border-t border-border">
+              <tr key={g.id} className="hover:bg-muted/30">
                 <td className="px-4 py-2">{fmtDate(g.created_at)}</td>
                 <td className="px-4 py-2">{g.Categoria?.Nome ?? "—"}</td>
-                <td className="px-4 py-2">{g.MateriaPrima?.nome || g.Produtos?.Nome || "—"}</td>
+                <td className="px-4 py-2 flex flex-col justify-center">
+                  <span>{g.MateriaPrima?.nome || g.Produtos?.Nome || "—"}</span>
+                  {g.MateriaPrima && g.MateriaPrima.unidade_medida === 'kg' && g.Fator && (
+                     <span className="text-[10px] text-muted-foreground bg-muted w-fit px-1.5 rounded uppercase mt-0.5 tracking-tight">{(g.Fator / 1000).toLocaleString('pt-BR')} Kg</span>
+                  )}
+                  {g.MateriaPrima && g.MateriaPrima.unidade_medida === 'g' && g.Fator && (
+                     <span className="text-[10px] text-muted-foreground bg-muted w-fit px-1.5 rounded uppercase mt-0.5 tracking-tight">{g.Fator} g</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right text-destructive font-medium">{fmt(g.Valor)}</td>
                 <td className="px-4 py-2 text-right">
                   <Button size="sm" variant="ghost" onClick={() => remove(g.id)}>
@@ -309,6 +368,8 @@ const Gastos = () => {
               </tr>
             ))}
             {items.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">Nenhum gasto.</td></tr>}
+              </>
+            )}
           </tbody>
         </table>
       </Card>

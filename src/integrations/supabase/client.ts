@@ -1,11 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://jxuaalmmznbtaxmnnrsc.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_6PxTzfd99YAdwPsYcXyhbw_RDZ9_921";
+// Lendo variáveis de ambiente no padrão Vite (import.meta.env)
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Tipos das tabelas são gerenciados manualmente em database-types.ts.
-// Usamos `any` no generic do client porque as tabelas usam PascalCase
-// e ainda não geramos types via Supabase CLI.
+if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  console.error("Variáveis de ambiente do Supabase não encontradas! Verifique o seu arquivo .env.");
+}
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: localStorage,

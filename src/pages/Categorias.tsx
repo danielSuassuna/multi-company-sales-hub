@@ -13,12 +13,16 @@ const Categorias = () => {
   const [items, setItems] = useState<any[]>([]);
   const [nome, setNome] = useState("");
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => { document.title = "Categorias · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
+    setLoading(true);
     const { data } = await supabase.from("Categoria").select("*").eq("id_empresa", empresaId).order("id", { ascending: false });
     setItems(data ?? []);
+    setLoading(false);
   };
 
   useEffect(() => { load(); }, [empresaId]);
@@ -39,6 +43,14 @@ const Categorias = () => {
     load();
   };
 
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
       <header>
@@ -57,8 +69,9 @@ const Categorias = () => {
       </Card>
 
       <Card className="divide-y divide-border">
-        {items.length === 0 && <div className="p-5 text-sm text-muted-foreground">Nenhuma categoria.</div>}
-        {items.map((c) => (
+        {loading && <div className="p-10 flex justify-center text-muted-foreground animate-pulse">Carregando dados...</div>}
+        {!loading && items.length === 0 && <div className="p-5 text-sm text-muted-foreground">Nenhuma categoria.</div>}
+        {!loading && items.map((c) => (
           <div key={c.id} className="flex items-center justify-between p-4">
             <span>{c.Nome}</span>
             <Button size="sm" variant="ghost" onClick={() => remove(c.id)}>

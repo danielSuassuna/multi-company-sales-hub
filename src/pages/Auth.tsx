@@ -57,19 +57,12 @@ const Auth = () => {
     if (error) { setBusy(false); return toast.error(error.message); }
     if (!data.user) { setBusy(false); return toast.error("Falha ao criar conta"); }
 
-    // Cria empresa, vincula no profile e dá role admin (caso o trigger SQL ainda não exista)
-    try {
-      const { data: emp, error: empErr } = await supabase
-        .from("Empresa").insert({ Nome: sEmpresa }).select().single();
-      if (empErr) throw empErr;
-      await supabase.from("profiles").upsert({ id: data.user.id, nome: sNome, id_empresa: emp.id });
-      await supabase.from("user_roles").insert({ user_id: data.user.id, role: "admin" });
-    } catch (err) {
-      console.warn("Setup pós-signup:", err);
-    }
+    // A criação de Empresa, vinculação em Profile e assignment de Role 
+    // AGORA FICARÁ A CARGO DO BACKEND (Supabase Autentication Trigger ou RPC Security Definer).
+    // O Frontend nunca deve despachar inserção em `user_roles` com chaves expostas publicamente.
 
     setBusy(false);
-    toast.success("Conta criada!");
+    toast.success("Conta criada! Redirecionando para o painel...");
     navigate("/", { replace: true });
   };
 

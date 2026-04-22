@@ -54,10 +54,12 @@ const Telegram = () => {
   };
 
   const handleRemove = async (id: number) => {
+    if (!empresaId) return;
     const { error } = await supabase
       .from("idChatxidEmpresa")
       .delete()
-      .eq("id", id);
+      .eq("id", id)
+      .eq("id_empresa", empresaId);
 
     if (error) {
       toast.error("Erro ao remover chat: " + error.message);
@@ -66,6 +68,14 @@ const Telegram = () => {
       loadChats();
     }
   };
+
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">

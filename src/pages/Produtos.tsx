@@ -29,10 +29,13 @@ const Produtos = () => {
   const [novoMateria, setNovoMateria] = useState("");
   const [novoQtd, setNovoQtd] = useState("");
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => { document.title = "Produtos · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
+    setLoading(true);
     const { data: prods } = await supabase.from("Produtos").select("*").eq("id_empresa", empresaId).order("id", { ascending: false });
     setItems(prods ?? []);
     const { data: mats } = await supabase.from("MateriaPrima").select("*").eq("id_empresa", empresaId);
@@ -44,6 +47,7 @@ const Produtos = () => {
       map[r.id_produto].push(r);
     });
     setReceitas(map);
+    setLoading(false);
   };
   useEffect(() => { load(); }, [empresaId]);
 
@@ -119,6 +123,14 @@ const Produtos = () => {
     await supabase.from("Produtos").update({ Custo: custo }).eq("id", idProduto);
   };
 
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <header>
@@ -142,7 +154,7 @@ const Produtos = () => {
             {novasMateriasProd.length > 0 && (
                 <div className="space-y-2">
                   {novasMateriasProd.map((m, idx) => (
-                    <div key={idx} className="flex justify-between items-center text-sm border p-2 rounded">
+                    <div key={idx} className="flex justify-between items-center text-sm border p-2 rounded bg-background">
                       <span>{m.name} × {m.qtd}</span>
                       <Button type="button" size="sm" variant="ghost" onClick={() => {
                           setNovasMateriasProd(prev => prev.filter((_, i) => i !== idx));
@@ -159,12 +171,20 @@ const Produtos = () => {
                   <Select value={tempMateria} onValueChange={setTempMateria}>
                     <SelectTrigger><SelectValue placeholder="Matéria-prima" /></SelectTrigger>
                     <SelectContent>
-                      {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
+                      {materias.map((m) => {
+                        const und = m.unidade_medida || 'un';
+                        const labelUnd = und === 'kg' ? 'g' : und;
+                        return (
+                          <SelectItem key={m.id} value={String(m.id)}>
+                            {m.nome} (em {labelUnd})
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Input className="w-24" type="number" placeholder="Qtd" value={tempQtd} onChange={(e) => setTempQtd(e.target.value)} />
+                  <Input className="w-32" type="number" placeholder="Qtd" value={tempQtd} onChange={(e) => setTempQtd(e.target.value)} />
                 </div>
                 <Button type="button" size="sm" variant="secondary" onClick={() => {
                   if (!tempMateria || !tempQtd) return;
@@ -190,7 +210,8 @@ const Produtos = () => {
       </Card>
 
       <div className="space-y-3">
-        {items.map((p) => {
+        
+        {!loading && items.map((p) => {
           const margem = (p.Preco_venda ?? 0) - (p.Custo ?? 0);
           const isOpen = open === p.id;
           return (
@@ -215,24 +236,35 @@ const Produtos = () => {
               {isOpen && (
                 <div className="border-t border-border p-4 space-y-3 bg-muted/20">
                   <div className="text-xs uppercase tracking-wider text-muted-foreground">Receita</div>
-                  {(receitas[p.id] ?? []).map((r) => (
+                  {(receitas[p.id] ?? []).map((r) => {
+                    const matInfo = materias.find(m => m.id === r.id_materia);
+                    const und = matInfo?.unidade_medida || 'un';
+                    const displayUnd = und === 'kg' ? 'g' : und;
+                    return (
                     <div key={r.id} className="flex items-center justify-between text-sm">
-                      <span>{r.MateriaPrima?.nome} × {r.quantidade}</span>
+                      <span>{r.MateriaPrima?.nome} × {r.quantidade} {displayUnd}</span>
                       <Button size="sm" variant="ghost" onClick={() => removeMateria(r.id, p.id)}>
                         <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </div>
-                  ))}
+                    )
+                  })}
                   <div className="flex gap-2 items-end pt-2">
                     <div className="flex-1">
                       <Select value={novoMateria} onValueChange={setNovoMateria}>
                         <SelectTrigger><SelectValue placeholder="Matéria-prima" /></SelectTrigger>
                         <SelectContent>
-                          {materias.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
+                          {materias.map((m) => {
+                             const und = m.unidade_medida || 'un';
+                             const labelUnd = und === 'kg' ? 'g' : und;
+                             return (
+                               <SelectItem key={m.id} value={String(m.id)}>{m.nome} (em {labelUnd})</SelectItem>
+                             )
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
-                    <Input className="w-24" type="number" placeholder="Qtd" value={novoQtd} onChange={(e) => setNovoQtd(e.target.value)} />
+                    <Input className="w-32" type="number" placeholder="Qtd" value={novoQtd} onChange={(e) => setNovoQtd(e.target.value)} />
                     <Button size="sm" onClick={() => addMateria(p.id)}>Adicionar</Button>
                   </div>
                 </div>
@@ -240,7 +272,7 @@ const Produtos = () => {
             </Card>
           );
         })}
-        {items.length === 0 && <Card className="p-6 text-center text-muted-foreground">Nenhum produto cadastrado.</Card>}
+        {!loading && items.length === 0 && <Card className="p-6 text-center text-muted-foreground">Nenhum produto cadastrado.</Card>}
       </div>
     </div>
   );

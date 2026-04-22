@@ -11,11 +11,13 @@ const Estoque = () => {
   const [saldosMat, setSaldosMat] = useState<Record<number, number>>({});
   const [saldosProd, setSaldosProd] = useState<Record<number, number>>({});
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => { document.title = "Estoque · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
-    
+    setLoading(true);
     // 1. Get stock balances (single row per item)
     const { data: e } = await supabase.from("Estoque").select("*").eq("id_empresa", empresaId);
     const sm: Record<number, number> = {};
@@ -38,8 +40,17 @@ const Estoque = () => {
     setSaldosMat(sm);
     setSaldosProd(sp);
     setUniques(filteredUniques);
+    setLoading(false);
   };
   useEffect(() => { load(); }, [empresaId]);
+
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
@@ -56,14 +67,27 @@ const Estoque = () => {
               <th className="text-right px-4 py-2">Saldo</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
+            {loading ? (
+              <tr><td colSpan={2} className="px-4 py-10 text-center text-muted-foreground animate-pulse">Carregando inventário...</td></tr>
+            ) : (
+              <>
             {materias.map((m) => {
               const s = saldosMat[m.id] ?? 0;
               return (
-                <tr key={"mat-"+m.id} className="border-t border-border">
-                  <td className="px-4 py-2">{m.nome} <span className="text-[10px] text-muted-foreground ml-1 uppercase">(MP)</span></td>
-                  <td className={`px-4 py-2 text-right font-medium ${s < 0 ? "text-destructive" : s === 0 ? "text-muted-foreground" : "text-success"}`}>
-                    {s}
+                <tr key={"mat-"+m.id} className="hover:bg-muted/30">
+                  <td className="px-4 py-3">{m.nome} <span className="text-[10px] text-muted-foreground ml-1 uppercase">(MP)</span></td>
+                  <td className={`px-4 py-3 text-right font-medium ${s < 0 ? "text-destructive" : s === 0 ? "text-muted-foreground" : "text-success"}`}>
+                    {m.unidade_medida === 'kg' ? (
+                       <div className="flex flex-col items-end leading-tight">
+                         <span>{(s / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} kg</span>
+                         <span className="text-[10px] opacity-70 font-normal mt-0.5">{s.toLocaleString()} g</span>
+                       </div>
+                    ) : m.unidade_medida === 'g' ? (
+                       <span>{s.toLocaleString()} g</span>
+                    ) : (
+                       <span>{s.toLocaleString()} un</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -71,15 +95,17 @@ const Estoque = () => {
             {uniques.map((p) => {
               const s = saldosProd[p.id] ?? 0;
               return (
-                <tr key={"prod-"+p.id} className="border-t border-border">
-                  <td className="px-4 py-2">{p.Nome} <span className="text-[10px] text-primary/70 ml-1 uppercase">(Revenda)</span></td>
-                  <td className={`px-4 py-2 text-right font-medium ${s < 0 ? "text-destructive" : s === 0 ? "text-muted-foreground" : "text-success"}`}>
+                <tr key={"prod-"+p.id} className="hover:bg-muted/30">
+                  <td className="px-4 py-3">{p.Nome} <span className="text-[10px] text-primary/70 ml-1 uppercase">(Revenda)</span></td>
+                  <td className={`px-4 py-3 text-right font-medium ${s < 0 ? "text-destructive" : s === 0 ? "text-muted-foreground" : "text-success"}`}>
                     {s}
                   </td>
                 </tr>
               );
             })}
             {materias.length === 0 && uniques.length === 0 && <tr><td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">Vazio.</td></tr>}
+            </>
+            )}
           </tbody>
         </table>
       </Card>

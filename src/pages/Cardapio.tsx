@@ -22,11 +22,13 @@ const Cardapio = () => {
   const [valor, setValor] = useState("");
   const [novoProd, setNovoProd] = useState("");
   const [tempProds, setTempProds] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { document.title = "Cardápio · Vendas Pro"; }, []);
 
   const load = async () => {
     if (!empresaId) return;
+    setLoading(true);
     const { data: c } = await supabase.from("Cardapio").select("*").eq("id_empresa", empresaId).order("id", { ascending: false });
     setItems(c ?? []);
     const { data: p } = await supabase.from("Produtos").select("*").eq("id_empresa", empresaId);
@@ -39,6 +41,7 @@ const Cardapio = () => {
       map[r.id_cardapio].push(r);
     });
     setVincs(map);
+    setLoading(false);
   };
   useEffect(() => { load(); }, [empresaId]);
 
@@ -117,6 +120,14 @@ const Cardapio = () => {
   const tempValor = parseFloat(valor) || 0;
   const tempMargem = tempValor > 0 ? ((tempValor - tempCusto) / tempValor) * 100 : 0;
 
+    if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <header>
@@ -178,7 +189,8 @@ const Cardapio = () => {
       </Card>
 
       <div className="space-y-3">
-        {items.map((c) => {
+        
+        {!loading && items.map((c) => {
           const isOpen = open === c.id;
           const pcVincs = vincs[c.id] ?? [];
           const totalCusto = pcVincs.reduce((s, v) => s + (v.Produtos?.Custo ?? 0), 0);
@@ -234,7 +246,7 @@ const Cardapio = () => {
             </Card>
           );
         })}
-        {items.length === 0 && <Card className="p-6 text-center text-muted-foreground">Nenhum item no cardápio.</Card>}
+        {!loading && items.length === 0 && <Card className="p-6 text-center text-muted-foreground">Nenhum item no cardápio.</Card>}
       </div>
     </div>
   );
