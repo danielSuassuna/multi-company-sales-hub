@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Plus, Minus, ShoppingCart, Trash2, Settings2, X } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Trash2, Settings2, X, Utensils, Package } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -311,6 +311,14 @@ const PDV = () => {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-100px)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid lg:grid-cols-[1fr,360px] gap-6 max-w-7xl mx-auto">
       <div className="space-y-4">
@@ -331,10 +339,26 @@ const PDV = () => {
                 <button
                   key={c.id}
                   onClick={() => add(c, "cardapio")}
-                  className="text-left p-4 rounded-lg border border-border bg-card hover:border-primary hover:shadow-elegant transition-all"
+                  className="relative outline-none group text-left overflow-hidden rounded-2xl bg-gradient-to-br from-card to-muted/20 border border-border/80 hover:border-primary/50 hover:shadow-lg transition-all duration-300 min-h-[120px]"
                 >
-                  <div className="font-medium">{c.Nome}</div>
-                  <div className="text-primary text-sm mt-1">{fmt(c.Valor ?? 0)}</div>
+                  <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors duration-300 pointer-events-none" />
+                  <div className="absolute -right-6 -top-6 w-24 h-24 bg-primary/10 rounded-full blur-2xl group-hover:bg-primary/20 transition-all duration-500" />
+                  
+                  <div className="p-4 relative z-10 flex flex-col h-full justify-between gap-4">
+                    <div className="flex justify-between items-start">
+                      <div className="p-2 bg-background/80 backdrop-blur-sm rounded-xl shadow-sm border border-border/50 text-muted-foreground group-hover:text-primary transition-colors">
+                        <Utensils className="w-4 h-4" />
+                      </div>
+                      <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center translate-x-4 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-300 shadow-md">
+                        <Plus className="w-4 h-4" />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div className="font-semibold text-sm leading-tight text-foreground/90 group-hover:text-foreground transition-colors line-clamp-2">{c.Nome}</div>
+                      <div className="text-primary font-bold text-sm mt-1">{fmt(c.Valor ?? 0)}</div>
+                    </div>
+                  </div>
                 </button>
               ))}
               {!loading && cardapio.length === 0 && (
@@ -352,13 +376,29 @@ const PDV = () => {
                 <button
                   key={p.id}
                   onClick={() => add(p, "produto")}
-                  className="text-left p-4 rounded-lg border border-border bg-card hover:border-primary hover:shadow-elegant transition-all"
+                  className="relative outline-none group text-left overflow-hidden rounded-2xl bg-gradient-to-br from-card to-muted/20 border border-border/80 hover:border-emerald-500/40 hover:shadow-lg transition-all duration-300 min-h-[120px]"
                 >
-                  <div className="font-medium flex items-center gap-1">
-                    {p.Nome}
-                    {p.is_unique && <span className="text-[9px] uppercase bg-muted text-muted-foreground px-1 py-0.5 rounded ml-1">PRONTO</span>}
+                  <div className="absolute inset-0 bg-emerald-500/0 group-hover:bg-emerald-500/5 transition-colors duration-300 pointer-events-none" />
+                  <div className="absolute -right-6 -top-6 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all duration-500" />
+                  
+                  <div className="p-4 relative z-10 flex flex-col h-full justify-between gap-4">
+                    <div className="flex justify-between items-start">
+                      <div className="p-2 bg-background/80 backdrop-blur-sm rounded-xl shadow-sm border border-border/50 text-muted-foreground group-hover:text-emerald-500 transition-colors">
+                        <Package className="w-4 h-4" />
+                      </div>
+                      <div className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center translate-x-4 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-300 shadow-md">
+                        <Plus className="w-4 h-4" />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <div className="font-semibold text-sm leading-tight flex items-start flex-wrap gap-1.5 text-foreground/90 group-hover:text-foreground transition-colors line-clamp-2">
+                        {p.Nome}
+                        {p.is_unique && <span className="text-[9px] uppercase bg-emerald-500/10 text-emerald-600 font-bold px-1.5 py-0.5 rounded-sm flex-shrink-0 mt-0.5">Pronto</span>}
+                      </div>
+                      <div className="text-emerald-600 font-bold text-sm mt-1">{fmt(p.Preco_venda ?? 0)}</div>
+                    </div>
                   </div>
-                  <div className="text-primary text-sm mt-1">{fmt(p.Preco_venda ?? 0)}</div>
                 </button>
               ))}
               {!loading && produtos.length === 0 && (

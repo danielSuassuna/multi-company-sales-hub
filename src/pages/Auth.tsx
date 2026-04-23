@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Building2 } from "lucide-react";
+import { Store } from "lucide-react";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -70,7 +70,7 @@ const Auth = () => {
     <div className="min-h-screen grid lg:grid-cols-2 bg-background">
       <div className="hidden lg:flex flex-col justify-between p-12 gradient-surface border-r border-border">
         <div className="flex items-center gap-2 text-primary font-semibold">
-          <Building2 className="h-5 w-5" /> Vendas Pro
+          <Store className="h-5 w-5" /> Vendas Pro
         </div>
         <div>
           <h1 className="text-4xl font-semibold mb-3 leading-tight">
