@@ -174,7 +174,7 @@ const Pedidos = () => {
                         </div>
                       </div>
                       
-                      <div className="p-4 flex-1 grid grid-cols-2 gap-x-4 gap-y-3 content-start items-start">
+                      <div className="p-4 flex-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 content-start items-start">
                         {(() => {
                            const groupedPeds = peds.reduce((acc: any[], p: any) => {
                                const getModStr = (m: any) => `${m.tipo}-${m.MateriaPrima?.nome}`;

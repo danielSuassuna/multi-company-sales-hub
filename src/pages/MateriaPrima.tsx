@@ -87,8 +87,9 @@ const MateriaPrima = () => {
       </Card>
 
       <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/40 text-muted-foreground">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap sm:whitespace-normal">
+            <thead className="bg-muted/40 text-muted-foreground">
             <tr>
               <th className="text-left px-4 py-2">Nome</th>
               <th className="text-right px-4 py-2">Custo unitário atual</th>
@@ -134,7 +135,8 @@ const MateriaPrima = () => {
               </>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </Card>
     </div>
   );

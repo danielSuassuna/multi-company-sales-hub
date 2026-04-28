@@ -331,8 +331,9 @@ const Gastos = () => {
       </Card>
 
       <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/40 text-muted-foreground">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap sm:whitespace-normal">
+            <thead className="bg-muted/40 text-muted-foreground">
             <tr>
               <th className="text-left px-4 py-2">Data</th>
               <th className="text-left px-4 py-2">Categoria</th>
@@ -371,7 +372,8 @@ const Gastos = () => {
               </>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </Card>
     </div>
   );

@@ -1,10 +1,12 @@
+import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, ShoppingCart, ScrollText, BookOpen, Package, Boxes,
-  Tags, Wallet, Building2, LogOut, Receipt, Wheat, Send, Store
+  Tags, Wallet, Building2, LogOut, Receipt, Wheat, Send, Store, Menu
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -24,6 +26,7 @@ const nav = [
 export const AppLayout = () => {
   const { signOut, empresaNome, user, roles } = useAuth();
   const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleLogout = async () => {
     await signOut();
@@ -92,32 +95,57 @@ export const AppLayout = () => {
       {/* Spacer para a Sidebar não cobrir o conteúdo (mesma largura da sidebar retraída) */}
       <div className="hidden md:block w-[65px] flex-shrink-0" />
 
-      <div className="flex-1 flex flex-col min-w-0 bg-secondary/10">
-        <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-border">
-          <div className="font-semibold">{empresaNome ?? "Sistema"}</div>
+      <div className="flex-1 flex flex-col min-w-0 bg-secondary/10 pt-[56px] md:pt-0">
+        <header className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-[56px] border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-sm">
+          <div className="flex items-center gap-3">
+            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 -ml-2">
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[280px] p-0 flex flex-col">
+                <div className="h-[65px] flex items-center px-4 border-b border-border w-full flex-shrink-0">
+                  <div className="flex items-center gap-3 w-full">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 text-primary">
+                      <Store className="h-4 w-4" />
+                    </div>
+                    <div className="flex flex-col overflow-hidden">
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground/70 leading-tight">Empresa</span>
+                        <span className="font-semibold text-foreground truncate leading-tight text-sm">{empresaNome ?? "—"}</span>
+                    </div>
+                  </div>
+                </div>
+                <nav className="flex-1 py-4 overflow-y-auto flex flex-col items-start px-3 gap-1">
+                  {items.map((n) => (
+                    <NavLink
+                      key={n.to}
+                      to={n.to}
+                      end={n.to === "/"}
+                      onClick={() => setMobileOpen(false)}
+                      className={({ isActive }) =>
+                        cn(
+                          "flex items-center gap-3 px-3 py-3 rounded-md text-sm transition-colors w-full",
+                          isActive
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )
+                      }
+                    >
+                      <n.icon className="h-5 w-5" />
+                      <span>{n.label}</span>
+                    </NavLink>
+                  ))}
+                </nav>
+              </SheetContent>
+            </Sheet>
+            <div className="font-semibold">{empresaNome ?? "Sistema"}</div>
+          </div>
           <Button size="sm" variant="ghost" onClick={handleLogout}><LogOut className="h-4 w-4" /></Button>
         </header>
         <main className="flex-1 p-4 md:p-8 overflow-auto">
           <Outlet />
         </main>
-        <nav className="md:hidden flex items-center gap-1 overflow-x-auto px-2 py-2 border-t border-border bg-sidebar">
-          {items.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.to === "/"}
-              className={({ isActive }) =>
-                cn(
-                  "flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-md text-[10px] whitespace-nowrap",
-                  isActive ? "text-primary" : "text-muted-foreground"
-                )
-              }
-            >
-              <n.icon className="h-4 w-4" />
-              {n.label}
-            </NavLink>
-          ))}
-        </nav>
       </div>
     </div>
   );
